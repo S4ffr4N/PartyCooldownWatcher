@@ -212,3 +212,21 @@ Run tests/cooldowns.lua from the addon directory with Lua 5.1+. It covers cast-o
 detection, spec gating, passive/secret-ID exclusion, charge deduplication, missing
 base data, potions, and personal defensive dispatch across all 40 listed specs.
 Mocked tests do not certify protected UI behavior in a live Mythic+ run.
+
+Potion diagnostics
+------------------
+Install the updated Core.lua and /reload before capturing.
+/pcdl diag clear - discard old capture and counters
+/pcdl diag on    - record player/party spell-success events without chat spam
+/pcdl diag mark  - insert a timestamp immediately before the observed potion use
+/pcdl diag off   - stop recording; report remains available
+/pcdl diag show  - open a selectable report; Ctrl/Cmd+A then Ctrl/Cmd+C to copy
+
+Compare a short out-of-combat test and a short Mythic+ combat test. Have a party
+member use a supported potion, and note which member and which potion they used.
+The report includes plain spell IDs, potion matches, exclusion reasons, hidden-ID
+counts, combat/Mythic+ context, and the last 200 lines. Hidden values are never
+converted to text or compared with spell IDs. Self-use is logged as a control but
+does not start a party timer. An event with a hidden ID cannot identify potion use;
+a missing event cannot establish that no potion was consumed.
+Copy the report BEFORE /reload or logout: the capture is session-only.

@@ -536,10 +536,121 @@ function Core:StartCooldown(unit, entry, reason, activeDuration, phase, usedAtOv
     if ns.UI then ns.UI:RefreshUnit(unit) end
 end
 
+-- Diagnostics keep only plain text; secret values are classified, never decoded.
+-- A bounded buffer and counters prevent combat chat spam and unbounded storage.
+local diagnostic = {enabled=false, lines={}, total=0, hidden=0, potions=0}
+local function diagnosticLine(message)
+    local context = ""
+    if InCombatLockdown then
+        local ok, combat = safeCall(InCombatLockdown)
+        if ok and not isSecret(combat) and combat then context = " combat" end
+    end
+    if challengeActive() then context = context.." mythic+" end
+    local line = string.format("[%.1f%s] %s", GetTime(), context, message)
+    table.insert(diagnostic.lines, line)
+    if #diagnostic.lines > 200 then table.remove(diagnostic.lines, 1) end
+end
+
+function Core:DiagnosticCast(unit, spellID)
+    if not diagnostic.enabled then return end
+    local token = "hidden-unit"
+    if not isSecret(unit) then
+        if type(unit) ~= "string" then return end
+        if unit ~= "player" and not unit:match("^party[1-4]$") then return end
+        token = unit
+    end
+    diagnostic.total = diagnostic.total + 1
+    if isSecret(spellID) then
+        diagnostic.hidden = diagnostic.hidden + 1
+        diagnosticLine(token.." SUCCEEDED spellID=HIDDEN (cannot identify potion)")
+    elseif type(spellID) ~= "number" then
+        diagnosticLine(token.." SUCCEEDED spellID=MISSING/INVALID")
+    else
+        local potion = ns.SpellByKey.health_potion
+        local matched = false
+        if potion then
+            for _, id in ipairs(potion.spellIDs) do
+                if id == spellID then matched = true break end
+            end
+        end
+        local detail = ""
+        if matched then
+            diagnostic.potions = diagnostic.potions + 1
+            if token == "player" then detail = " POTION (self; party timer intentionally excluded)"
+            elseif token == "hidden-unit" then detail = " POTION (unit hidden; timer excluded)"
+            elseif self:ShouldShow(potion, token, false) then detail = " POTION (eligible for timer)"
+            else detail = " POTION (timer excluded: settings or missing roster metadata)" end
+        end
+        diagnosticLine(token.." SUCCEEDED spellID="..tostring(spellID)..detail)
+    end
+end
+
+function Core:GetDiagnosticText()
+    return string.format("PartyCDLens potion diagnostics: %s\nEvents=%d hiddenIDs=%d readablePotionMatches=%d\nLast %d lines; timestamps are seconds since client start.\n",
+        diagnostic.enabled and "ON" or "OFF", diagnostic.total, diagnostic.hidden,
+        diagnostic.potions, #diagnostic.lines)..table.concat(diagnostic.lines, "\n")
+end
+
+function Core:ShowDiagnostics()
+    if not self.diagnosticWindow then
+        local f = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+        f:SetSize(700, 420)
+        f:SetPoint("CENTER")
+        f:SetFrameStrata("DIALOG")
+        f:SetBackdrop({bgFile="Interface\\Buttons\\WHITE8X8", edgeFile="Interface\\Buttons\\WHITE8X8", edgeSize=1})
+        f:SetBackdropColor(0.05,0.05,0.05,0.98)
+        local title = f:CreateFontString(nil,"OVERLAY","GameFontNormal")
+        title:SetPoint("TOPLEFT",12,-12)
+        title:SetText("PartyCDLens diagnostics - Ctrl/Cmd+A, Ctrl/Cmd+C to copy")
+        local close = CreateFrame("Button",nil,f,"UIPanelCloseButton")
+        close:SetPoint("TOPRIGHT")
+        local scroll = CreateFrame("ScrollFrame",nil,f,"UIPanelScrollFrameTemplate")
+        scroll:SetPoint("TOPLEFT",12,-40)
+        scroll:SetPoint("BOTTOMRIGHT",-32,12)
+        local edit = CreateFrame("EditBox",nil,scroll)
+        edit:SetMultiLine(true)
+        edit:SetAutoFocus(false)
+        edit:SetFontObject(ChatFontNormal)
+        edit:SetWidth(645)
+        edit:SetScript("OnEscapePressed",function() f:Hide() end)
+        scroll:SetScrollChild(edit)
+        f.edit = edit
+        self.diagnosticWindow = f
+    end
+    local f = self.diagnosticWindow
+    f.edit:SetText(self:GetDiagnosticText())
+    f:Show()
+    f.edit:SetFocus()
+    f.edit:HighlightText()
+end
+
+function Core:DiagnosticCommand(action)
+    if action == "on" then
+        diagnostic.enabled = true
+        diagnosticLine("CAPTURE START; player is a control, only party1-party4 feed timers")
+        print("PartyCDLens diagnostics ON. Use /pcdl diag mark immediately before a potion, then /pcdl diag off and /pcdl diag show. Buffer is cleared by reload/logout.")
+    elseif action == "off" then
+        diagnosticLine("CAPTURE STOP")
+        diagnostic.enabled = false
+        print("PartyCDLens diagnostics OFF. /pcdl diag show opens the copyable report.")
+    elseif action == "clear" then
+        wipe(diagnostic.lines)
+        diagnostic.total, diagnostic.hidden, diagnostic.potions = 0, 0, 0
+        print("PartyCDLens diagnostic buffer cleared.")
+    elseif action == "mark" then
+        diagnosticLine("MARK: compare surrounding events with the observed potion use")
+    elseif action == "show" then
+        self:ShowDiagnostics()
+    else
+        print("PartyCDLens: /pcdl diag on | off | mark | show | clear")
+    end
+end
+
 -- All manually cast entries have a readable-event fallback, including spells
 -- without a lasting aura. Protected sensor entries keep their own authoritative
 -- visual path. Never infer passive procs or compare secret spell identities.
 function Core:OnTrackedSpellcast(unit, spellID)
+    self:DiagnosticCast(unit, spellID)
     if isSecret(unit) or type(unit) ~= "string" or not unit:match("^party[1-4]$") then return end
     if isSecret(spellID) or type(spellID) ~= "number" then return end
     local now = GetTime()
@@ -977,7 +1088,9 @@ function Core:Initialize()
     SLASH_PARTYCDLENS1 = "/pcdl"
     SlashCmdList.PARTYCDLENS = function(msg)
         msg = strlower(strtrim(msg or ""))
-        if msg == "debug" then
+        if msg == "diag" or msg:match("^diag ") then
+            Core:DiagnosticCommand(msg:match("^diag%s+(%S+)") or "")
+        elseif msg == "debug" then
             Core:ToggleDebug()
         elseif msg == "test" then
             Core:ToggleTest()

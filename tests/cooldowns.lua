@@ -119,3 +119,27 @@ for spec in pairs(ns.SpecNames) do
 end
 assert(specCount==40, 'specialization catalogue changed; review coverage')
 print('All '..specCount..' specialization baseline checks passed')
+-- Diagnostics identify missing/hidden event data without decoding it or
+-- mutating timers, and retain a bounded copyable report.
+core:DiagnosticCommand('on')
+core:DiagnosticCommand('clear')
+setup('WARRIOR',71)
+issecretvalue=function(v) return v == 1234768 or v == 'secret-unit' end
+core:OnTrackedSpellcast('party1',1234768)
+core:OnTrackedSpellcast('secret-unit',999)
+assert(state('health_potion').status == 'unknown')
+local report=core:GetDiagnosticText()
+assert(report:find('hiddenIDs=1',1,true))
+assert(report:find('hidden-unit',1,true))
+assert(not report:find('1234768',1,true), 'hidden potion ID must not be printed')
+issecretvalue=nil
+core:OnTrackedSpellcast('party1',1234768)
+assert(core:GetDiagnosticText():find('POTION (eligible for timer)',1,true))
+assert(state('health_potion').status == 'cooldown')
+for i=1,250 do core:DiagnosticCast('party1',999) end
+assert(core:GetDiagnosticText():find('Last 200 lines',1,true))
+core:DiagnosticCommand('off')
+local frozen=core:GetDiagnosticText()
+core:DiagnosticCast('party1',1234768)
+assert(core:GetDiagnosticText()==frozen, 'disabled diagnostics must not record')
+print('Diagnostic regression checks passed')
