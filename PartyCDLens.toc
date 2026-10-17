@@ -1,0 +1,14 @@
+## Interface: 120105
+## Title: PartyCDLens
+## Notes: Party cooldown tracker using protected AuraContainer sensors + inference fallback for WoW Retail 12.1.5.
+## Author: Lucas + ChatGPT
+## Version: 0.9.0-alpha
+## SavedVariables: PartyCDLensDB, PartyCDLensState
+
+Database.lua
+Core.lua
+SecureSensors.lua
+AuraInference.lua
+Frames.lua
+Options.lua
+EditMode.lua
